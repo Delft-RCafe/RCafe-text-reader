@@ -35,6 +35,13 @@ text_data[,`:=`(full_text_lower = tolower(full_text),
                 )]
 
 # Read the metadata file
+text_meta <- readODS::read_ods(here('data', 'metadata', 'theses_IDE_metadata.ods')) %>% as.data.table()
+
+# Join the external metadata file to the main text 
+setkey(text_meta, ID)
+setkey(text_data, file_number)
+
+text_data <- text_meta[text_data]
 
 
 # Save the data -----------------------------------------------------------
