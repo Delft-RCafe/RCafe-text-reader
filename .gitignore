@@ -1,0 +1,11 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.RDataTmp
+data/
+figures/
+data_output/
+*.html
+*.docx
+*.pptx
