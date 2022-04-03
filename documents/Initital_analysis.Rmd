@@ -1,7 +1,7 @@
 ---
 title: "Initial analysis - dissertations"
 author: "Aleksandra Wilczynska"
-date: "28-2-2022"
+date: "2-4-2022"
 output: html_document
 ---
 
@@ -18,9 +18,17 @@ library(ggraph)
 library(stringr)
 library(tm)
 library(tidytext)
+library(pluralize)
+library(quanteda)
+library(fst)
+library(stopwords)
+library(SnowballC)
 
 # Load the data table  - each row - different publication  ------------------------------------------------
-text_data<-readRDS(here('data_output', 'text_data.RDS'))
+text_data<-readRDS(here('data_output', 'text_data.RDS')) 
+
+# Set the ggplot theme
+theme_set(theme_minimal())
 
 ```
 
@@ -30,7 +38,7 @@ This is a first attempt to analyse the dissertation texts from IDE faculty. The 
 
 - [Tidy text mining](https://www.tidytextmining.com/)
 - [Text mining in R - video](https://www.youtube.com/watch?v=ae_XVhjHd_o)
-- [Basisc](https://sicss.io/2018/materials/day3-text-analysis/basic-text-analysis/rmarkdown/Basic_Text_Analysis_in_R.html)
+- [Basics](https://sicss.io/2018/materials/day3-text-analysis/basic-text-analysis/rmarkdown/Basic_Text_Analysis_in_R.html)
 
 ## Preparing the dataset
 
@@ -39,18 +47,21 @@ This is a first attempt to analyse the dissertation texts from IDE faculty. The 
 The first step in the analysis: create a dataset with tokens (in this case words) as units of analysis. One row per token.
 
 ```{r words_table}
-# Divide thesis text into words into words ---------------------------------
+# Divide thesis text into words ---------------------------------
 text_by_words <- unnest_tokens(text_data, word, full_text_lower) # divide by words
 text_by_words <- text_by_words[!as.data.table(stop_words), on = "word"] # remove common stop words
 text_by_words <- text_by_words[str_detect(word, '[a-zA-Z]')] # keep only strings which include at least one letter
+#text_by_words[, word := char_wordstem(word)] #  stem  <- not working well
+#text_by_words[, word := singularize(word)] # singularize <- slow
+#text_by_words[ , word := wordStem(word, language = 'en')]
+
 
 # Create data.table with separate words only -------------------------------
 #names(text_by_words)
 words <- text_by_words[,.N, by = .(filename, word)] # data.table with word count by publication
 
 
-
-# Create a dataset with the publications in which the words have not appeared
+# Create a dataset with the publications in which the words have not appeared (For stats)
 filenames <- setDT(words[, expand.grid(unique(filename),unique(word))  ])
 setnames(filenames,c('filename', 'word') )
 
@@ -91,10 +102,13 @@ words_exploded[,`:=`(pct_per_publ = round((N/N_words_publ)*100), # pct of all wo
             )]
 
 # see the distribution of words, find a cutoff 
-boxplot(words_exploded$N_total) 
+qplot(words_exploded$N_total,  geom = 'boxplot' , 
+      main = 'Distribution of word frequency accross the documentd',
+      xlab = 'Number of times a word was mentioned') 
 
+cutoff <- 2500
 
-x<-words_exploded[order(-N_total),.(word,N_publication, N_total, pct_publ)] %>%
+words_exploded[order(-N_total),.(word,N_publication, N_total, pct_publ)] %>%
   unique() %>%
   head(10)%>%
   knitr::kable(caption = "Top 10 words") 
@@ -135,29 +149,34 @@ words_exploded[, `:=`(Avg_N_publication = mean(N), # average words per publicati
                       Std_N_publication = sd(N) # standard deviation of number of words per publication
                       ), by = word]
 
-words_exploded[,Concentration := Std_N_publication/Avg_N_publication ] #metric of dispersion: if standard deviation higher than the mean, than can be considered as dispersed
+words_exploded[,Concentration := Std_N_publication/Avg_N_publication ] #metric of dispersion: if standard deviation much higher than the mean, than can be considered as dispersed
 
-hist(words_exploded[N_publication>1,Concentration], main = 'Concentration of words appearing in more than one publication')
+qplot(words_exploded[N_publication>1,Concentration],
+      geom = 'histogram', 
+      main = 'Concentration of words appearing in more than one publication',
+      xlab = 'Concentration (sd/avg)',
+      alpha = 0.8
+      )
 
-words_exploded[N_total>1000 & Concentration>=2.5 , .(word, N_total, N_publication,
-                                                  Concentration)][order(-N_total)] %>% 
+words_exploded[N_total>cutoff & Concentration>=2.5 , .(word, N_total, N_publication,
+                                                  Concentration)][order(-Concentration)] %>% 
   unique() %>%
-  knitr::kable(caption = "Words mentioned >1000 times (overall) and concentrated in one/few publications")# showing words concentrated in few works, including also those appearing only in one publication (Concentration measure not available for those)
+  knitr::kable(caption = paste("Words mentioned ",prettyNum(cutoff, big.mark = ',')," times (overall) and concentrated in one/few publications"))# showing words concentrated in few works, including also those appearing only in one publication (Concentration measure not available for those)
 
 
 ```
  
-Looking at the result above, anything with the `Dispersion` measure above 2.5 would be considered as high concentration - these words would naturally affect more the overall result of the analysis with the higher number of dissertations at hand. With 16, they might be highly influential. This can be offset by controlling for the metadata ( title/ keywords).      
+Looking at the result above, anything with the `Dispersion` measure above 6 would be considered as high concentration - these words would naturally affect more the overall result of the analysis with the higher number of dissertations at hand. The lower number of documents analysed, the more influential they might be. This can be offset by controlling for the metadata ( title/ keywords).      
 
 
 ```{r  popular_evenly}
 # Popular words evenly spread throughout all/many publications 
 
-words_exploded[N_total>1000 & Concentration<1.5 , .(word, N_total, N_publication,
+words_exploded[N_total>cutoff & Concentration<1.5 , .(word, N_total, N_publication,
                                                   Concentration)][order(-N_total)]%>% 
   unique() %>%
   knitr::kable(caption = "Popular words evenly spread throughout all (many) publications ")
-
+#
 ```
 
 
@@ -169,7 +188,7 @@ words[stringr::str_detect(word,'[^a-zA-Z]')][order(-N_total)][N_total>100,.(word
   unique() %>% 
   knitr::kable(caption ='Popular words including non-letter')
 
-stop_words_add <- c('doi.org', 'e.g', 'i.e')
+stop_words_add <- c('doi.org', 'e.g', 'i.e' )
 
 ```
 
@@ -181,7 +200,7 @@ Some of the words with non-letters can be cut ('doi.org', 'e.g' , 'i.e'  ). Manu
 words_exploded[N_total>100 & Concentration<1 & nchar(word)<5 , .(word, N_total, N_publication,
                                                   Concentration)][order(-N_total)] %>%
   unique() %>%
-  head(20) %>%
+  head(40) %>%
   knitr::kable(caption = 'Popular short words ')
 
 stop_words_add <- c(stop_words_add  , c('al', 'de', 'van', 'een', 'en', 'het','http', 'html', 'https') )
@@ -189,9 +208,8 @@ stop_words_add <- c(stop_words_add  , c('al', 'de', 'van', 'een', 'en', 'het','h
 ```
 Some short words can be dismissed (al, et, van)
 
-
 ```{r evenly_sparse}
-# Words appearing in all publications bu only once/ a few times  - potentially coming from metadata/title page)
+# Words appearing in all publications bu only once/ a few times  - potentially coming from metadata/title page) - not a concern, as they would have low frequency
 
 
 ```
@@ -206,13 +224,20 @@ Some short words can be dismissed (al, et, van)
 # y <- adist(x, x)
 # colnames(y) <- x ; rownames(y) <- x
 # y[lower.tri(y)] <- NA
+
+# tried word stems, but the result is not satisfactory
+
+#text_by_words[, word := char_wordstem(word)] #  stem  <- not working well
+#text_by_words[, word := singularize(word)] # singularize <- slow
+#text_by_words[ , word := wordStem(word, language = 'en')]
+
 ```
 
 
 ```{r additional_cleaning}
 
 # Remove highly concentrated popular words 
-#words <- words[!word %in% words_exploded[N_total>1000 & Concentration > 3, word] ]
+#words <- words[!word %in% words_exploded[N_total>1000 & Concentration > 6, word] ]
 
 # Remove additional identified stopwords 
 words <- words[!word %in% stop_words_add]
@@ -224,21 +249,37 @@ words <- words[!word %in% stop_words_add]
 
 ## Visualisation
 
+```{r}
+# Package to create a wordcloud
+library(wordcloud2)
+library(viridis)
+
+words_total <- words[,.(word, N_total)]%>% unique()
+
+set.seed(12345)
+wordcloud2(words_total[N_total>100], color = sample(plasma(1000)) )
+
+```
+
+
+### Frequencies
+
+
 
 
 ## Topic modelling 
 
-Packages : 
- - pdftools
- - tabulizer 
- - tidytext
- - pluralize ( singular out of plurals)
- - gc()
- -bi_gram()
-- library(quanteda)
-- library(readtext)
-- library(wordnet)
-- library(SnowballC)
+<!-- Packages :  -->
+<!--  - pdftools -->
+<!--  - tabulizer  -->
+<!--  - tidytext -->
+<!--  - pluralize ( singular out of plurals) -->
+<!--  - gc() -->
+<!--  -bi_gram() -->
+<!-- - library(quanteda) -->
+<!-- - library(readtext) -->
+<!-- - library(wordnet) -->
+<!-- - library(SnowballC) -->
  
  
 
