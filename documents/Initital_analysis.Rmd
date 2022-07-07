@@ -6,23 +6,21 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = F)
+knitr::opts_chunk$set(echo = T)
 
 # Load libraries ----------------------------------------------------------
+# Package names
+packages <- c("tidyverse", "here", "data.table", "igraph", "ggraph", "stringr", "tm", "tidytext", "pluralize" , "quanteda", "fst", "stopwords", "SnowballC", "textstem" ,"wordcloud2", "viridis", "htmlwidgets", "webshot"
+              )
 
-library(tidyverse)
-library(here)
-library(data.table)
-library(igraph)
-library(ggraph)
-library(stringr)
-library(tm)
-library(tidytext)
-library(pluralize)
-library(quanteda)
-library(fst)
-library(stopwords)
-library(SnowballC)
+# Install packages not yet installed
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+
+# Packages loading
+invisible(lapply(packages, library, character.only = TRUE))
 
 # Load the data table  - each row - different publication  ------------------------------------------------
 text_data<-readRDS(here('data_output', 'text_data.RDS')) 
@@ -39,25 +37,21 @@ This is a first attempt to analyse the dissertation texts from IDE faculty. The 
 - [Tidy text mining](https://www.tidytextmining.com/)
 - [Text mining in R - video](https://www.youtube.com/watch?v=ae_XVhjHd_o)
 - [Basics](https://sicss.io/2018/materials/day3-text-analysis/basic-text-analysis/rmarkdown/Basic_Text_Analysis_in_R.html)
+- [Lemmatisation with textstem](https://cran.r-project.org/web/packages/textstem/README.html)
 
 ## Preparing the dataset
 
 ### Extracting tokens
 
-The first step in the analysis: create a dataset with tokens (in this case words) as units of analysis. One row per token.
+The first step in the analysis: create a dataset with tokens (in this case **words**) as units of analysis. One row per token (following the tidy text methodology).
 
 ```{r words_table}
 # Divide thesis text into words ---------------------------------
-text_by_words <- unnest_tokens(text_data, word, full_text_lower) # divide by words
+text_by_words <- unnest_tokens(text_data, word, full_text_lower) # divide text into words
 text_by_words <- text_by_words[!as.data.table(stop_words), on = "word"] # remove common stop words
 text_by_words <- text_by_words[str_detect(word, '[a-zA-Z]')] # keep only strings which include at least one letter
-#text_by_words[, word := char_wordstem(word)] #  stem  <- not working well
-#text_by_words[, word := singularize(word)] # singularize <- slow
-#text_by_words[ , word := wordStem(word, language = 'en')]
-
 
 # Create data.table with separate words only -------------------------------
-#names(text_by_words)
 words <- text_by_words[,.N, by = .(filename, word)] # data.table with word count by publication
 
 
@@ -70,50 +64,79 @@ setkey(filenames, filename,word)
 words_exploded <- words[filenames]
 setnafill(words_exploded, cols="N", fill=0)
 
-
 ```
 
 ### Summary statistics 
 
 Add auxiliary statistics: 
 
-- Count of words across all publications
-- Count of publications the word appeared in
-- Percentage a word constitutes of all words within a publication
-- Percentage of publications where the words is mentioned
+1. Count of words across all publications
+2. Count of publications the word appeared in
+3. Percentage a word constitutes of all words within a publication
+4. Percentage of publications where the words is mentioned
 
 ```{r words_stats}
 # Words with count of publications they showed up in 
 words_exploded[,`:=`(N_publication = sum(N>0), # count of publications they showed up in  
             N_total = sum(N) # count of times the words showed up in total
-), by = word]#[order(-N_total)]
+            ), by = word]
 
 words[,`:=`(N_publication = sum(N>0), # count of publications they showed up in  
             N_total = sum(N) # count of times the words showed up in total
-), by = word]#[order(-N_total)]
+), by = word]
 
 
 words_exploded[, N_words_publ := sum(N), by =filename]# count number of words in dissertation
 
 
 # Relative terms 
-words_exploded[,`:=`(pct_per_publ = round((N/N_words_publ)*100), # pct of all words within publication
-            pct_publ = round((N_publication/length(unique(filename)))*100) # pct of publications 
+words_exploded[,`:=`(pct_per_publ = round((N/N_words_publ)*100,1), # pct of all words within publication
+            pct_publ = round((N_publication/length(unique(filename)))*100,1) # pct of publications 
             )]
 
-# see the distribution of words, find a cutoff 
-qplot(words_exploded$N_total,  geom = 'boxplot' , 
-      main = 'Distribution of word frequency accross the documentd',
-      xlab = 'Number of times a word was mentioned') 
 
+# highest pct of all words publication
+words_exploded[, max_pct_per_publ := max(pct_per_publ), by = filename ]
+  
+```
+
+
+There are only a handful of words mentioned 1,000+ words. 
+```{r word_count}
+# see the distribution of words, find a cutoff 
+words_exploded %>% ggplot(aes(N_total))+ 
+  geom_boxplot(color = '#7fcdbb',
+               alpha = 0.7,
+               outlier.color = '#7fcdbb',
+               outlier.alpha = 0.7)+
+  ggtitle('Distribution of word frequency accross the documents')+
+  xlab('Number of word mentions') 
+
+```
+
+Three of the top 10 words (al, de, van) should be treated as stopwords.
+
+```{r top10words}
 cutoff <- 2500
 
 words_exploded[order(-N_total),.(word,N_publication, N_total, pct_publ)] %>%
   unique() %>%
   head(10)%>%
   knitr::kable(caption = "Top 10 words") 
-  
 ```
+
+```{r top10wordspubl}
+max_publ <- words_exploded[max_pct_per_publ == pct_per_publ,
+                           .(filename,
+                             word,max_pct_per_publ)][order(-max_pct_per_publ)] 
+  max_publ%>% 
+  unique() %>%
+  head(10)%>%
+  knitr::kable(caption = "Percentage of word usage in a dissertation")
+
+```
+
+
 
 ### Additional cleaning 
 
@@ -121,19 +144,27 @@ The popular stopwords have been removed in earlier stage, but some additional tw
 
 Some considerations: 
 
-- Popular words concentrated in one publication 
+1. Popular words concentrated in one publication 
   - Potentially center of one topic, rather than trend (e.g. 'toilet') - cross-reference with title when available in the metadata
-- Popular words evenly spread throughout all/many publications 
+  
+  
+2. Popular words evenly spread throughout all/many publications 
   - Potentially the trend/ important words
 
-- Popular words evenly spread throughout all/many publications but not conveying any meaning 
+
+3. Popular words evenly spread throughout all/many publications but not conveying any meaning 
   - Additional stop words 
   - Might look for those with non-letters 
   - Is there a way to automate the cleaning - or semi-automate?
-- Words appearing in all publications bu only once/ a few times 
+  
+  
+4. Words appearing in all publications bu only once/ a few times 
   - Potentially coming from metadata/title page
-- Additional cleaning: 
-  - Remove word 'variations' e.g. user vs users; design vs designing etc.? (parallelisation?)
+  
+  
+5. Additional cleaning: 
+  - Remove word 'variations' e.g. user vs users; design vs designing etc.? (lemmatization?)
+  
 
 ```{r popular_concentrated}
 # Additional cleaning -----------------------------------------------------------
@@ -158,30 +189,31 @@ qplot(words_exploded[N_publication>1,Concentration],
       alpha = 0.8
       )
 
-words_exploded[N_total>cutoff & Concentration>=2.5 , .(word, N_total, N_publication,
+words_exploded[N_total>cutoff, .(word, N_total, N_publication,
                                                   Concentration)][order(-Concentration)] %>% 
   unique() %>%
-  knitr::kable(caption = paste("Words mentioned ",prettyNum(cutoff, big.mark = ',')," times (overall) and concentrated in one/few publications"))# showing words concentrated in few works, including also those appearing only in one publication (Concentration measure not available for those)
+  head(10) %>%
+  knitr::kable(caption = paste("Words mentioned at least",prettyNum(cutoff, big.mark = ',')," times (overall) and concentrated in one/few publications"))# showing words concentrated in few works, including also those appearing only in one publication (Concentration measure not available for those)
 
 
 ```
  
-Looking at the result above, anything with the `Dispersion` measure above 6 would be considered as high concentration - these words would naturally affect more the overall result of the analysis with the higher number of dissertations at hand. The lower number of documents analysed, the more influential they might be. This can be offset by controlling for the metadata ( title/ keywords).      
+Looking at the result above, anything with the `Dispersion` measure above 6 would be considered as high concentration - these words would naturally affect more the overall result of the analysis with the higher number of dissertations at hand. The lower number of documents analysed, the more influential they might be. This can be offset by controlling for the metadata (title/ keywords).      
 
 
 ```{r  popular_evenly}
 # Popular words evenly spread throughout all/many publications 
 
 words_exploded[N_total>cutoff & Concentration<1.5 , .(word, N_total, N_publication,
-                                                  Concentration)][order(-N_total)]%>% 
+                                                      Concentration)][order(-N_total)]%>% 
   unique() %>%
-  knitr::kable(caption = "Popular words evenly spread throughout all (many) publications ")
-#
+  head(10) %>%
+  knitr::kable(caption = "Popular words evenly spread throughout all (many) publications")
 ```
 
+Looking for additional stop words. 
 
 ```{r stopwords_nonalhpa}
-
 # Popular words evenly spread throughout all/many publications but not conveying any meaning - additional stop words - might look for those with non-letters ( is there a way to automate the cleaning - or semi-automate?)
 
 words[stringr::str_detect(word,'[^a-zA-Z]')][order(-N_total)][N_total>100,.(word,N_total)] %>%
@@ -197,7 +229,7 @@ Some of the words with non-letters can be cut ('doi.org', 'e.g' , 'i.e'  ). Manu
 
 ```{r stopwords_short }
 # Popular short words
-words_exploded[N_total>100 & Concentration<1 & nchar(word)<5 , .(word, N_total, N_publication,
+words_exploded[N_total>100 & nchar(word)<5 , .(word, N_total, N_publication,
                                                   Concentration)][order(-N_total)] %>%
   unique() %>%
   head(40) %>%
@@ -208,14 +240,11 @@ stop_words_add <- c(stop_words_add  , c('al', 'de', 'van', 'een', 'en', 'het','h
 ```
 Some short words can be dismissed (al, et, van)
 
-```{r evenly_sparse}
-# Words appearing in all publications bu only once/ a few times  - potentially coming from metadata/title page) - not a concern, as they would have low frequency
+#### Performing lemmatization
 
+First, some examples have been provided to see if the lemmatization function `lemmatize_words` from `textstem` package works as intended. 
 
-```
-
-
-```{r word_variations }
+```{r lemmatization }
 # remove word 'variations' e.g. user vs users; design vs designing etc.
 
 # Finding similarities between the words / naive approach
@@ -231,6 +260,28 @@ Some short words can be dismissed (al, et, van)
 #text_by_words[, word := singularize(word)] # singularize <- slow
 #text_by_words[ , word := wordStem(word, language = 'en')]
 
+# Check if lemmatization with text stem works
+
+#Create a few small datasets from the sample to visually investigate if it works 
+set.seed(12345)
+
+extract_rand_window <- function(x, p){
+    first_index = sample(seq(length(x) - p + 1), 1)
+    x[first_index:(first_index + p -1)]
+    }
+
+example_lemma <-list()
+for (i in 1:10) {
+  example_lemma[[i]] <- extract_rand_window(words$word,10)
+}
+
+Original <- unlist(example_lemma)
+Lemmatized = lemmatize_words(Original) 
+
+lemma_example = data.table(Original, Lemmatized)
+
+lemma_example %>% knitr::kable(caption = 'Lemmatization result')
+
 ```
 
 
@@ -240,34 +291,57 @@ Some short words can be dismissed (al, et, van)
 #words <- words[!word %in% words_exploded[N_total>1000 & Concentration > 6, word] ]
 
 # Remove additional identified stopwords 
-words <- words[!word %in% stop_words_add]
+words_total <- words[,.(word, N_total)]%>% unique()
 
-
+words_clean <- words_total[!word %in% stop_words_add]
+words_clean[,word := lemmatize_words(word)]
+words_clean[,N_total:=sum(N_total), by = word]
+words_clean <- words_clean[,.(word, N_total)]%>% unique()
 
 ```
 
 
 ## Visualisation
+Please note that the package `wordcloud2` doesn't render the most frequent words, if there is no space to picture all the words. for this reason - I limited number of words depicted to 1,000 most popular. Also, the CRAN version of the package renders only one word cloud per document. The developer's version works.
 
-```{r}
+
+### Word Cloud without cleaning
+```{r wordcloud}
 # Package to create a wordcloud
-library(wordcloud2)
-library(viridis)
-
-words_total <- words[,.(word, N_total)]%>% unique()
-
 set.seed(12345)
-wordcloud2(words_total[N_total>100], color = sample(plasma(1000)) )
+
+wcloud_data <- words_total[order(-N_total)][1:1000]
+wcloud_data[1:10] %>% knitr::kable(caption = 'Top 10 words without cleaning')
+
+
+#cloud_dirty <- 
+  wordcloud2(wcloud_data, size = 0.7,  color = sample(plasma(1000)) )
+
 
 ```
+Size of the data: **`r prettyNum(nrow(words_total), big.mark = ',')`**
+
+### Word Cloud after cleaning
+```{r wordcloud_clean}
+# Package to create a wordcloud
+set.seed(12345)
+
+wcloud_data <- words_clean[order(-N_total)][1:1000]
+wcloud_data[1:10] %>% knitr::kable(caption = 'Top 10 words after cleaning')
+
+#cloud_clean<-
+  wordcloud2(wcloud_data, size = 0.7, color = sample(viridis(1000)) )
+
+```
+Size of the data: **`r prettyNum(nrow(words_clean), big.mark = ',')`**
 
 
-### Frequencies
+<!-- ### Frequencies -->
 
 
 
 
-## Topic modelling 
+<!-- ## Topic modelling  -->
 
 <!-- Packages :  -->
 <!--  - pdftools -->
