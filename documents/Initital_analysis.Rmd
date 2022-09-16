@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = T)
 
 # Load libraries ----------------------------------------------------------
 # Package names
-packages <- c("tidyverse", "here", "data.table", "igraph", "ggraph", "stringr", "tm", "tidytext", "pluralize" , "quanteda", "fst", "stopwords", "SnowballC", "textstem" ,"wordcloud2", "viridis", "htmlwidgets", "webshot"
+packages <- c("tidyverse", "here", "data.table", "igraph", "ggraph", "stringr", "tm", "tidytext", "pluralize" , "quanteda", "fst", "stopwords", "SnowballC", "textstem" ,"wordcloud2", "viridis", "htmlwidgets", "webshot", "lexicon", "wesanderson", "RColorBrewer", "textdata"
               )
 
 # Install packages not yet installed
@@ -276,13 +276,28 @@ for (i in 1:10) {
 }
 
 Original <- unlist(example_lemma)
-Lemmatized = lemmatize_words(Original) 
+Lemmatized <- lemmatize_words(Original) 
 
-lemma_example = data.table(Original, Lemmatized)
+lemma_example <- data.table(Original, Lemmatized)
 
 lemma_example %>% knitr::kable(caption = 'Lemmatization result')
 
 ```
+
+```{r}
+# Check if lemmatization with text stem works - this time for the 20 most popular words in the dataset
+
+Original <- unique(words[,.(word, N_total)])[order(-N_total)][1:20]$word
+Lemmatized <-lemmatize_words(Original) 
+
+lemma_example <- data.table(Original, Lemmatized)
+
+lemma_example %>% knitr::kable(caption = 'Lemmatization result')
+
+# data should not be adapted
+
+```
+
 
 
 ```{r additional_cleaning}
@@ -290,13 +305,18 @@ lemma_example %>% knitr::kable(caption = 'Lemmatization result')
 # Remove highly concentrated popular words 
 #words <- words[!word %in% words_exploded[N_total>1000 & Concentration > 6, word] ]
 
+# data 
+data(hash_lemmas)
+adapted_lemmas <- hash_lemmas[token != 'data' ]
+
 # Remove additional identified stopwords 
 words_total <- words[,.(word, N_total)]%>% unique()
 
 words_clean <- words_total[!word %in% stop_words_add]
-words_clean[,word := lemmatize_words(word)]
+words_clean[,word := lemmatize_words(word, dictionary = adapted_lemmas)]
 words_clean[,N_total:=sum(N_total), by = word]
 words_clean <- words_clean[,.(word, N_total)]%>% unique()
+
 
 ```
 
@@ -314,11 +334,20 @@ wcloud_data <- words_total[order(-N_total)][1:1000]
 wcloud_data[1:10] %>% knitr::kable(caption = 'Top 10 words without cleaning')
 
 
-#cloud_dirty <- 
-  wordcloud2(wcloud_data, size = 0.7,  color = sample(plasma(1000)) )
+set.seed(12345)
+wordcloud2(wcloud_data, size = 0.7,  color = sample(plasma(1000)) )
 
 
 ```
+
+```{r}
+  cloud_dirty <-   wordcloud2(wcloud_data, size = 0.7,  color = sample(plasma(1000)) )
+  my_path  <- htmltools::html_print(cloud_dirty) # saves html in temp directory
+  print(my_path) # the location of the html file.
+
+```
+
+
 Size of the data: **`r prettyNum(nrow(words_total), big.mark = ',')`**
 
 ### Word Cloud after cleaning
@@ -329,11 +358,25 @@ set.seed(12345)
 wcloud_data <- words_clean[order(-N_total)][1:1000]
 wcloud_data[1:10] %>% knitr::kable(caption = 'Top 10 words after cleaning')
 
-#cloud_clean<-
-  wordcloud2(wcloud_data, size = 0.7, color = sample(viridis(1000)) )
+# set.seed(12345)
+# wordcloud2(wcloud_data, size = 0.7, color=sample(viridis(1000)))
+
+mycolors <- c( rep('#00A6D6',6),rep('#000000',1000))
+
+set.seed(12345)
+wordcloud2(wcloud_data, size = 0.7, color = mycolors  )
+
 
 ```
 Size of the data: **`r prettyNum(nrow(words_clean), big.mark = ',')`**
+
+
+```{r}
+  cloud_clean <- wordcloud2(wcloud_data, size = 0.7, color = sample(viridis(1000)) )
+  my_path  <- htmltools::html_print(cloud_clean) # saves html in temp directory
+  print(my_path) # the location of the html file.
+
+```
 
 
 <!-- ### Frequencies -->
