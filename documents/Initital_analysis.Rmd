@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = T)
 
 # Load libraries ----------------------------------------------------------
 # Package names
-packages <- c("tidyverse", "here", "data.table", "igraph", "ggraph", "stringr", "tm", "tidytext", "pluralize" , "quanteda", "fst", "stopwords", "SnowballC", "textstem" ,"wordcloud2", "viridis", "htmlwidgets", "webshot", "lexicon", "wesanderson", "RColorBrewer", "textdata"
+packages <- c("tidyverse", "here", "data.table", "igraph", "ggraph", "stringr", "tm", "tidytext", "pluralize" , "quanteda", "fst", "stopwords", "SnowballC", "textstem" ,"wordcloud2", "viridis", "htmlwidgets", "webshot", "lexicon", "wesanderson", "RColorBrewer", "textdata", "stringi", "networkD3"
               )
 
 # Install packages not yet installed
@@ -38,6 +38,7 @@ This is a first attempt to analyse the dissertation texts from IDE faculty. The 
 - [Text mining in R - video](https://www.youtube.com/watch?v=ae_XVhjHd_o)
 - [Basics](https://sicss.io/2018/materials/day3-text-analysis/basic-text-analysis/rmarkdown/Basic_Text_Analysis_in_R.html)
 - [Lemmatisation with textstem](https://cran.r-project.org/web/packages/textstem/README.html)
+- [Network analysis of ngrams](https://juanitorduz.github.io/text-mining-networks-and-visualization-plebiscito-tweets/)
 
 ## Preparing the dataset
 
@@ -305,7 +306,7 @@ lemma_example %>% knitr::kable(caption = 'Lemmatization result')
 # Remove highly concentrated popular words 
 #words <- words[!word %in% words_exploded[N_total>1000 & Concentration > 6, word] ]
 
-# data 
+# adapt the lemmatization dictionary to remove word: data ( by default changes to datum)
 data(hash_lemmas)
 adapted_lemmas <- hash_lemmas[token != 'data' ]
 
@@ -379,8 +380,147 @@ Size of the data: **`r prettyNum(nrow(words_clean), big.mark = ',')`**
 ```
 
 
-<!-- ### Frequencies -->
+## Bigram analysis
 
+## Creating a bigram
+
+```{r create-bigram}
+
+
+# Divide thesis text into words ---------------------------------
+bigrams <- unnest_tokens(text_data, bigram, full_text_lower, token = 'ngrams', n = 2) # divide text into biegrams
+
+# remove the full text col
+bigrams[, full_text := NULL]
+
+# check if there are some NAs in the bigram col
+bigrams[is.na(bigram)] # no rows 
+bigrams <- bigrams[!is.na(bigram)]
+
+# get eac hof the words into separate column
+bigrams[, c("word1", "word2") := tstrsplit(bigram, " ", fixed=TRUE)]
+
+#remove bigrams that include stopwords
+bigrams <- bigrams[!(word1 %in% stop_words$word | word2 %in% stop_words$word) ]
+
+# keep only bigrams which include at least one letter
+bigrams <- bigrams[stri_detect_regex(bigram, '[a-zA-Z]')] 
+
+
+# additional cleaning steps defined in previous section
+
+bigrams <- bigrams[!(word1 %in% stop_words_add | word2 %in% stop_words_add )]
+
+# should we lemmatize n-grams?
+#lemmatized  version
+
+
+# adapt the lemmatization dictionary to remove word: pss ( by default changes to ps)
+adapted_lemmas <- adapted_lemmas[token != 'pss' ]
+
+
+vars <- c("word1", "word2")
+bigrams[,c(vars) := lapply(.SD, lemmatize_words, dictionary = adapted_lemmas), .SDcols = vars]
+
+```
+
+
+# Frequencies 
+```{r}
+
+bigrams[,weight := .N , by = .(word1, word2)]
+
+bigrams_total <- unique(bigrams[,.(word1, word2,weight)])
+bigrams_total[order(-weight)]
+
+```
+
+## Additional bigram-specific data cleaning
+- Remove 'chapter x' diagrams
+- Remove AB PS word combination (AB-PSS) (done in previous step)
+
+```{r}
+#show the chapter numbers
+bigrams_total[ word1 == 'chapter' & stri_detect_regex(word2,'[0-9]' ) ][order(-weight)][1:5]
+
+# remove the chapter numbers from the list
+bigrams_total <- bigrams_total[!( word1 == 'chapter' & stri_detect_regex(word2,'[0-9]' ) )]
+
+bigrams_total[order(-weight)][1:10]
+```
+
+
+##  Network analysis
+
+### igraph 
+
+```{r}
+# minimum weight to be included in the analysis
+thr <- 300
+
+# function to scale by a factor
+sw <- function(x, lambda) {
+  x / lambda
+}
+
+# create a network object
+ network <- bigrams_total[weight >= thr 
+                          ][,weight:=sw(weight, 2E3 )
+                            ][,graph_from_data_frame(.SD,directed = FALSE)]
+
+ 
+# Store the degree.
+V(network)$degree <- strength(graph = network)
+
+# Compute the weight shares.
+E(network)$width <- E(network)$weight/max(E(network)$weight)
+
+plot(
+  network, 
+  vertex.color = 'lightblue',
+  # Scale node size by degree.
+  vertex.size = 2*V(network)$degree,
+  vertex.label.color = 'black', 
+  vertex.label.cex = 0.6, 
+  vertex.label.dist = 1.6,
+  edge.color = 'gray', 
+  # Set edge width proportional to the weight relative value.
+  edge.width = 3*E(network)$width ,
+  main = 'Bigram Count Network', 
+  sub = paste('Weight Threshold:', thr), 
+  alpha = 50
+)
+
+```
+## networkD3
+
+```{r}
+# Create networkD3 object.
+network_D3 <- igraph_to_networkD3(g = network)
+# Define node size.
+network_D3$nodes$size <- (1E-2)*V(network)$degree
+# Degine color group (I will explore this feature later).
+network_D3$nodes$group <- 1
+# Define edges width. 
+network_D3$links$value <- 10*E(network)$width
+
+forceNetwork(
+  Links = network.D3$links, 
+  Nodes = network.D3$nodes, 
+  Source = 'source', 
+  Target = 'target',
+  NodeID = 'name',
+  Group = 'group', 
+  opacity = 0.9,
+  Value = 'value',
+  Nodesize = 'size', 
+  # We input a JavaScript function.
+  linkWidth = JS("function(d) { return Math.sqrt(d.value); }"), 
+  fontSize = 12,
+  zoom = TRUE, 
+  opacityNoHover = 1
+)
+```
 
 
 
