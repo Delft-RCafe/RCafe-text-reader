@@ -362,7 +362,9 @@ wcloud_data[1:10] %>% knitr::kable(caption = 'Top 10 words after cleaning')
 # set.seed(12345)
 # wordcloud2(wcloud_data, size = 0.7, color=sample(viridis(1000)))
 
-mycolors <- c( rep('#00A6D6',6),rep('#000000',1000))
+tud_blue<-'#00A6D6'
+
+mycolors <- c( rep(tud_blue,6),rep('#000000',1000))
 
 set.seed(12345)
 wordcloud2(wcloud_data, size = 0.7, color = mycolors  )
@@ -467,7 +469,7 @@ sw <- function(x, lambda) {
  network <- bigrams_total[weight >= thr 
                           ][,weight:=sw(weight, 2E3 )
                             ][,graph_from_data_frame(.SD,directed = FALSE)]
-
+ 
  
 # Store the degree.
 V(network)$degree <- strength(graph = network)
@@ -475,38 +477,94 @@ V(network)$degree <- strength(graph = network)
 # Compute the weight shares.
 E(network)$width <- E(network)$weight/max(E(network)$weight)
 
+par(bg="black")
+
 plot(
   network, 
-  vertex.color = 'lightblue',
+  vertex.color = colorspace::adjust_transparency(tud_blue, alpha = 0.8),
   # Scale node size by degree.
-  vertex.size = 2*V(network)$degree,
-  vertex.label.color = 'black', 
+  vertex.size = 8*V(network)$degree,
+  vertex.label.color = 'white', 
+  vertex.label.family='Helvetica',                  
+  vertex.label.font = 2, 
   vertex.label.cex = 0.6, 
-  vertex.label.dist = 1.6,
-  edge.color = 'gray', 
+  vertex.label.dist = 0.8,
+  edge.color = 'white', 
   # Set edge width proportional to the weight relative value.
-  edge.width = 3*E(network)$width ,
+  edge.width = 6*E(network)$width ,
   main = 'Bigram Count Network', 
   sub = paste('Weight Threshold:', thr), 
   alpha = 50
 )
 
 ```
+
+### Extract the main cluster 
+
+```{r}
+# Select biggest connected component.  
+V(network)$cluster <- clusters(graph = network)$membership
+
+cc_network <- induced_subgraph(
+  graph = network,
+  vids = which(V(network)$cluster == which.max(clusters(graph = network)$csize))
+)
+
+cc_network 
+```
+
+```{r}
+# Store the degree.
+V(cc_network)$degree <- strength(graph = cc_network)
+
+# Compute the weight shares.
+E(cc_network)$width <- E(cc_network)$weight/max(E(cc_network)$weight)
+
+
+par(bg="black")
+
+plot(
+  cc_network, 
+  vertex.color = colorspace::adjust_transparency(tud_blue, alpha = 0.7),
+  # Scale node size by degree.
+  vertex.size = 10*V(cc_network)$degree,
+  vertex.label.color = 'white', 
+  vertex.label.family='Helvetica',                  
+  vertex.label.font = 2, 
+  vertex.label.cex = 0.6, 
+  vertex.label.dist = 0.8,
+  edge.color = 'white', 
+  # Set edge width proportional to the weight relative value.
+  edge.width = 8*E(cc_network)$width ,
+  main = 'Bigram Count Network', 
+  sub = paste('Weight Threshold:', thr), 
+  alpha = 1
+)
+
+```
+
+
 ## networkD3
 
 ```{r}
 # Create networkD3 object.
 network_D3 <- igraph_to_networkD3(g = network)
 # Define node size.
-network_D3$nodes$size <- (1E-2)*V(network)$degree
+network_D3$nodes$size <- 100* V(network)$degree
 # Degine color group (I will explore this feature later).
 network_D3$nodes$group <- 1
 # Define edges width. 
-network_D3$links$value <- 10*E(network)$width
+network_D3$links$value <- 20*E(network)$width
+
+
+ColourScale <- 'd3.scaleOrdinal()
+            .domain(["lions", "tigers"])
+           .range(["#00A6D6", "#694489"]);'
+
 
 forceNetwork(
-  Links = network.D3$links, 
-  Nodes = network.D3$nodes, 
+  Links = network_D3$links, 
+  Nodes = network_D3$nodes, 
   Source = 'source', 
   Target = 'target',
   NodeID = 'name',
@@ -515,11 +573,16 @@ forceNetwork(
   Value = 'value',
   Nodesize = 'size', 
   # We input a JavaScript function.
-  linkWidth = JS("function(d) { return Math.sqrt(d.value); }"), 
-  fontSize = 12,
+  fontSize = 14,
   zoom = TRUE, 
-  opacityNoHover = 1
+  opacityNoHover = 1,
+  fontFamily = "sans-serif",
+  linkColour = "black",
+  colourScale = JS(ColourScale)
 )
+
+
+
 ```
 
 
